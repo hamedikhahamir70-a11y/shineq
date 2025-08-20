@@ -1,10 +1,17 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
+const cors = require('cors');
 
 const app = express();
+app.use(cors());
+
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = socketIo(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] }
+});
+
+const userToRoom = {};
 
 app.use(express.static('public'));
 
@@ -13,22 +20,35 @@ io.on('connection', (socket) => {
 
     socket.on('join-room', (roomId, userId) => {
         socket.join(roomId);
+        userToRoom[socket.id] = roomId;
         console.log(`User ${userId} joined room ${roomId}`);
-        socket.to(roomId).emit('user-connected', userId);
+        
+        // Inform the new user about existing users
+        const usersInRoom = io.sockets.adapter.rooms.get(roomId);
+        if (usersInRoom) {
+            const otherUsers = Array.from(usersInRoom).filter(id => id !== socket.id);
+            socket.emit('all-users', otherUsers);
+        }
 
-        // Handle signaling
-        socket.on('signal', (data) => {
-            console.log(`Relaying signal from ${data.from} to ${data.to}`);
-            io.to(data.to).emit('signal', {
-                signal: data.signal,
-                from: data.from
-            });
-        });
+        // Inform existing users about the new user
+        socket.to(roomId).emit('user-connected', socket.id);
+    });
 
-        socket.on('disconnect', () => {
-            console.log('User disconnected:', userId);
-            socket.to(roomId).emit('user-disconnected', userId);
-        });
+    socket.on('sending-signal', payload => {
+        io.to(payload.userToSignal).emit('user-joined', { signal: payload.signal, callerID: payload.callerID });
+    });
+
+    socket.on('returning-signal', payload => {
+        io.to(payload.callerID).emit('receiving-returned-signal', { signal: payload.signal, id: socket.id });
+    });
+
+    socket.on('disconnect', () => {
+        const roomId = userToRoom[socket.id];
+        if (roomId) {
+            socket.to(roomId).emit('user-disconnected', socket.id);
+            delete userToRoom[socket.id];
+            console.log('User disconnected:', socket.id);
+        }
     });
 });
 

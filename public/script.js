@@ -1,94 +1,102 @@
 const socket = io('/');
 const videoGrid = document.getElementById('video-grid');
 const myVideo = document.createElement('video');
-myVideo.muted = true; // Mute our own video to prevent echo
+myVideo.muted = true;
 
-const peers = {}; // Object to store all peer connections
+const peers = {};
 const ROOM_ID = 'default-room';
+let myStream;
 
-// Get user's camera and microphone
 navigator.mediaDevices.getUserMedia({
     video: true,
     audio: true
 }).then(stream => {
-    addVideoStream(myVideo, stream, true); // Add our own video stream
+    myStream = stream;
+    addVideoStream(myVideo, stream);
 
-    // When a new user connects, this event is received by existing users
-    socket.on('user-connected', userId => {
-        console.log('New user connected, creating peer for:', userId);
-        connectToNewUser(userId, stream);
-    });
-
-    // When we receive a signal from another peer
-    socket.on('signal', data => {
-        console.log('Received signal from:', data.from);
-        // If a peer connection already exists for the sender, pass the signal
-        if (peers[data.from]) {
-            peers[data.from].signal(data.signal);
-        }
-    });
-
-    // Join the room
     socket.emit('join-room', ROOM_ID, socket.id);
 
-}).catch(err => {
-    console.error('Failed to get local stream', err);
+    socket.on('all-users', users => {
+        users.forEach(userId => {
+            const peer = createPeer(userId, socket.id, stream);
+            peers[userId] = peer;
+        });
+    });
+
+    socket.on('user-connected', userId => {
+        const peer = createPeer(userId, socket.id, stream);
+        peers[userId] = peer;
+    });
+
+    socket.on('user-joined', payload => {
+        const peer = addPeer(payload.signal, payload.callerID, stream);
+        peers[payload.callerID] = peer;
+    });
+
+    socket.on('receiving-returned-signal', payload => {
+        const item = peers[payload.id];
+        item.signal(payload.signal);
+    });
+
+    socket.on('user-disconnected', userId => {
+        if (peers[userId]) {
+            peers[userId].destroy();
+        }
+        const video = document.getElementById(userId);
+        if (video) {
+            video.parentElement.remove();
+        }
+        delete peers[userId];
+    });
 });
 
-// Function to connect to a new user
-function connectToNewUser(userId, stream) {
-    // Create a new peer connection, we are the initiator
+function createPeer(userToSignal, callerID, stream) {
     const peer = new SimplePeer({
         initiator: true,
         trickle: false,
-        stream: stream,
-        config: {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        }
+        stream,
     });
 
-    // This event fires when the peer has a signal to send
     peer.on('signal', signal => {
-        console.log('Sending signal to:', userId);
-        socket.emit('signal', { to: userId, from: socket.id, signal });
+        socket.emit('sending-signal', { userToSignal, callerID, signal });
     });
 
-    // This event fires when we receive the remote user's stream
     peer.on('stream', userStream => {
-        console.log('Received stream from:', userId);
         const userVideo = document.createElement('video');
-        addVideoStream(userVideo, userStream, false);
+        addVideoStream(userVideo, userStream, userToSignal);
     });
 
-    // Store the new peer connection
-    peers[userId] = peer;
+    return peer;
 }
 
-// When a user disconnects, remove their video and destroy the peer connection
-socket.on('user-disconnected', userId => {
-    console.log('User disconnected:', userId);
-    if (peers[userId]) {
-        peers[userId].destroy();
-        delete peers[userId];
-    }
-    const videoElement = document.getElementById(userId);
-    if (videoElement) {
-        videoElement.parentElement.remove();
-    }
-});
+function addPeer(incomingSignal, callerID, stream) {
+    const peer = new SimplePeer({
+        initiator: false,
+        trickle: false,
+        stream,
+    });
 
-// Function to add a video stream to the grid
-function addVideoStream(video, stream, isLocal) {
+    peer.on('signal', signal => {
+        socket.emit('returning-signal', { signal, callerID });
+    });
+
+    peer.on('stream', userStream => {
+        const userVideo = document.createElement('video');
+        addVideoStream(userVideo, userStream, callerID);
+    });
+
+    peer.signal(incomingSignal);
+    return peer;
+}
+
+function addVideoStream(video, stream, userId) {
     video.srcObject = stream;
-    if (!isLocal) {
-        video.id = stream.id; // Use a unique ID for remote streams
+    if (userId) {
+        video.id = userId;
     }
-    video.playsInline = true; // Necessary for iOS Safari
+    video.playsInline = true;
     video.addEventListener('loadedmetadata', () => {
-        video.play().catch(e => console.error('Video play failed:', e));
+        video.play();
     });
     const videoWrapper = document.createElement('div');
     videoWrapper.className = 'video-container';
