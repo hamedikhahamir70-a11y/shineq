@@ -41,7 +41,13 @@ function connectToNewUser(userId, stream) {
     const peer = new SimplePeer({
         initiator: true, // The new user initiates the connection
         trickle: false, // Disable trickle ICE for simplicity
-        stream: stream
+        stream: stream,
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        }
     });
 
     peer.on('signal', signal => {
@@ -74,7 +80,13 @@ socket.on('signal', data => {
         const peer = new SimplePeer({
             initiator: false,
             trickle: false,
-            stream: myVideo.srcObject // Send our stream back
+            stream: myVideo.srcObject, // Send our stream back
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' }
+                ]
+            }
         });
 
         peer.on('signal', signal => {
