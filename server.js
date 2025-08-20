@@ -9,23 +9,25 @@ const io = socketIo(server);
 app.use(express.static('public'));
 
 io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
+    console.log('User connected:', socket.id);
 
     socket.on('join-room', (roomId, userId) => {
         socket.join(roomId);
-        socket.to(roomId).emit('user-connected', userId);
         console.log(`User ${userId} joined room ${roomId}`);
+        socket.to(roomId).emit('user-connected', userId);
 
+        // Handle signaling
         socket.on('signal', (data) => {
-            socket.to(data.to).emit('signal', {
-                from: userId,
-                signal: data.signal
+            console.log(`Relaying signal from ${data.from} to ${data.to}`);
+            io.to(data.to).emit('signal', {
+                signal: data.signal,
+                from: data.from
             });
         });
 
         socket.on('disconnect', () => {
-            socket.to(roomId).emit('user-disconnected', userId);
             console.log('User disconnected:', userId);
+            socket.to(roomId).emit('user-disconnected', userId);
         });
     });
 });
